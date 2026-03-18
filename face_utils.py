@@ -1,8 +1,11 @@
 """
-face_utils.py — Face detection and bounding-box helpers using MediaPipe Tasks API.
+face_utils.py — Face detection and bounding-box helpers.
 
-Compatible with mediapipe >= 0.10 (the legacy mp.solutions API was removed in 0.10).
-The required .tflite model is downloaded automatically on first use.
+Two detector backends:
+  "short"  — MediaPipe BlazeFace short-range (mediapipe >= 0.10).
+             Best for close-up / selfie images.
+  "full"   — OpenCV Haar cascade (bundled with cv2, no download needed).
+             Better for group photos and distant faces.
 """
 
 from __future__ import annotations
@@ -12,29 +15,30 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Optional
 
+import cv2
 import mediapipe as mp
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision as mp_vision
 import numpy as np
 
 # ---------------------------------------------------------------------------
-# Model download
+# Model download (short-range MediaPipe model only)
 # ---------------------------------------------------------------------------
 
-_MODEL_URL = (
+_SHORT_RANGE_URL = (
     "https://storage.googleapis.com/mediapipe-models/"
     "face_detector/blaze_face_short_range/float16/latest/"
     "blaze_face_short_range.tflite"
 )
-_MODEL_PATH = os.path.join(os.path.dirname(__file__), "blaze_face_short_range.tflite")
+_SHORT_RANGE_PATH = os.path.join(os.path.dirname(__file__), "blaze_face_short_range.tflite")
 
 
-def _ensure_model() -> str:
-    if not os.path.exists(_MODEL_PATH):
-        print(f"Downloading MediaPipe face detection model to {_MODEL_PATH} ...")
-        urllib.request.urlretrieve(_MODEL_URL, _MODEL_PATH)
+def _ensure_mediapipe_model() -> str:
+    if not os.path.exists(_SHORT_RANGE_PATH):
+        print(f"Downloading MediaPipe face detection model to {_SHORT_RANGE_PATH} ...")
+        urllib.request.urlretrieve(_SHORT_RANGE_URL, _SHORT_RANGE_PATH)
         print("Download complete.")
-    return _MODEL_PATH
+    return _SHORT_RANGE_PATH
 
 
 # ---------------------------------------------------------------------------
@@ -59,31 +63,44 @@ class FaceResult:
 
 class FaceDetector:
     """
-    Thin wrapper around MediaPipe Tasks FaceDetector (mediapipe >= 0.10).
+    Face detector with two backends selectable via ``range_mode``.
+
+    range_mode="short" (default)
+        MediaPipe BlazeFace short-range — fast, accurate for close-up faces.
+    range_mode="full"
+        OpenCV Haar cascade — handles group photos and small/distant faces.
+        No extra downloads needed; bundled with OpenCV.
 
     Usage::
 
-        with FaceDetector() as detector:
+        with FaceDetector(range_mode="full") as detector:
             faces = detector.detect(image_rgb)
     """
 
-    def __init__(self, min_confidence: float = 0.5) -> None:
+    def __init__(self, min_confidence: float = 0.5, range_mode: str = "short") -> None:
         self._min_confidence = min_confidence
+        self._range_mode = range_mode
         self._detector: Optional[mp_vision.FaceDetector] = None
+        self._cascade: Optional[cv2.CascadeClassifier] = None
 
     def __enter__(self) -> "FaceDetector":
-        model_path = _ensure_model()
-        options = mp_vision.FaceDetectorOptions(
-            base_options=mp_python.BaseOptions(model_asset_path=model_path),
-            min_detection_confidence=self._min_confidence,
-        )
-        self._detector = mp_vision.FaceDetector.create_from_options(options)
+        if self._range_mode == "full":
+            cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            self._cascade = cv2.CascadeClassifier(cascade_path)
+        else:
+            model_path = _ensure_mediapipe_model()
+            options = mp_vision.FaceDetectorOptions(
+                base_options=mp_python.BaseOptions(model_asset_path=model_path),
+                min_detection_confidence=self._min_confidence,
+            )
+            self._detector = mp_vision.FaceDetector.create_from_options(options)
         return self
 
     def __exit__(self, *_) -> None:
         if self._detector:
             self._detector.close()
             self._detector = None
+        self._cascade = None
 
     # ------------------------------------------------------------------
     # Core detection
@@ -95,6 +112,11 @@ class FaceDetector:
 
         Returns a (possibly empty) list of FaceResult objects.
         """
+        if self._range_mode == "full":
+            return self._detect_haar(image_rgb)
+        return self._detect_mediapipe(image_rgb)
+
+    def _detect_mediapipe(self, image_rgb: np.ndarray) -> list[FaceResult]:
         if self._detector is None:
             raise RuntimeError("Use FaceDetector as a context manager.")
 
@@ -122,14 +144,31 @@ class FaceDetector:
                 kp = det.keypoints[2]
                 nose_tip = (int(kp.x * w), int(kp.y * h))
 
-            faces.append(
-                FaceResult(
-                    bbox=(x1, y1, x2, y2),
-                    area=area,
-                    confidence=confidence,
-                    nose_tip=nose_tip,
-                )
-            )
+            faces.append(FaceResult(bbox=(x1, y1, x2, y2), area=area,
+                                    confidence=confidence, nose_tip=nose_tip))
+
+        return faces
+
+    def _detect_haar(self, image_rgb: np.ndarray) -> list[FaceResult]:
+        if self._cascade is None:
+            raise RuntimeError("Use FaceDetector as a context manager.")
+
+        gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
+        detections = self._cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=3,
+            minSize=(30, 30),
+        )
+
+        faces: list[FaceResult] = []
+        if len(detections) == 0:
+            return faces
+
+        for (x, y, fw, fh) in detections:
+            x1, y1, x2, y2 = int(x), int(y), int(x + fw), int(y + fh)
+            area = fw * fh
+            faces.append(FaceResult(bbox=(x1, y1, x2, y2), area=area, confidence=1.0))
 
         return faces
 

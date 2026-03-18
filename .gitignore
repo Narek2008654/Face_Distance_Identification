@@ -148,4 +148,6 @@ checkpoints/
 depth_output/
 *.tflite
 result*.jpg
+*.jpg
+*.png
 ml-depth-pro/checkpoints/
