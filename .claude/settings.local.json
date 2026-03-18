@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(python -c \"import depth_pro; import mediapipe; import cv2; import torch; print\\(''depth_pro OK''\\); print\\(''mediapipe'', mediapipe.__version__\\); print\\(''opencv'', cv2.__version__\\); print\\(''torch'', torch.__version__\\)\")",
+      "Bash(python -c \"from face_utils import FaceDetector, FaceResult; print\\(''face_utils OK''\\)\")",
+      "Bash(python -c \"from pipeline import FaceDistancePipeline; print\\(''pipeline OK''\\)\")",
+      "Bash(ls d:/MathrixAI/*.jpg)",
+      "Bash(python -c \"import os; print\\(os.getcwd\\(\\)\\)\")"
+    ]
+  }
+}

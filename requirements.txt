@@ -1,0 +1,11 @@
+# Core dependencies
+torch>=2.1.0
+torchvision>=0.16.0
+numpy>=1.24.0
+opencv-python>=4.8.0
+Pillow>=10.0.0
+mediapipe>=0.10.0
+
+# Apple ml-depth-pro must be installed manually from the GitHub repo.
+# See README.md for instructions.
+# DO NOT add it here — pip cannot resolve it from PyPI.
